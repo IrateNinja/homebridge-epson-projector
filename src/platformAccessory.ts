@@ -1,141 +1,177 @@
-import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
+import type {
+  CharacteristicValue,
+  PlatformAccessory,
+  Service,
+  WithUUID,
+} from 'homebridge';
 
-import type { ExampleHomebridgePlatform } from './platform.js';
+import { request } from 'urllib';
+
+import type { EpsonProjectorHomebridgePlatform } from './platform.js';
+import { PROJECTOR_ERR, PROJECTOR_PROPERTY_POWER, PROJECTOR_PROPERTY_POWER_ACTIVE_MAP } from './settings.js';
+
+// Commands Reference
+// https://files.support.epson.com/pdf/pl600p/pl600pcm.pdf
+// http://support.epson.com.tw/i-tech/%E6%8A%80%E8%A1%93%E6%96%87%E4%BB%B6/EB-L1070U_L1070_L1060U_Specification_EN.pdf
 
 /**
  * Platform Accessory
  * An instance of this class is created for each accessory your platform registers
  * Each accessory may expose multiple services of different service types.
  */
-export class ExamplePlatformAccessory {
-  private service: Service;
+export class EpsonProjectorAccessory {
+  private tvService: Service;
 
-  /**
-   * These are just used to create a working example
-   * You should implement your own code to track the state of your accessory
-   */
-  private exampleStates = {
+  private projectorState = {
     On: false,
-    Brightness: 100,
   };
 
+
   constructor(
-    private readonly platform: ExampleHomebridgePlatform,
+    private readonly platform: EpsonProjectorHomebridgePlatform,
     private readonly accessory: PlatformAccessory,
   ) {
-    // set accessory information
-    this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+    this.accessory
+      .getService(this.platform.Service.AccessoryInformation)!
+      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Epson')
+      .setCharacteristic(this.platform.Characteristic.Model, platform.config.model)
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, platform.config.serial);
 
-    // get the LightBulb service if it exists, otherwise create a new LightBulb service
-    // you can create multiple services for each accessory
-    this.service = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
-
-    // set the service name, this is what is displayed as the default name on the Home app
-    // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
-
-    // each service must implement at-minimum the "required characteristics" for the given service type
-    // see https://developers.homebridge.io/#/service/Lightbulb
-
-    // register handlers for the On/Off Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.On)
-      .onSet(this.setOn.bind(this)) // SET - bind to the `setOn` method below
-      .onGet(this.getOn.bind(this)); // GET - bind to the `getOn` method below
-
-    // register handlers for the Brightness Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.Brightness)
-      .onSet(this.setBrightness.bind(this)); // SET - bind to the `setBrightness` method below
-
-    /**
-     * Creating multiple services of the same type.
-     *
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     *
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same subtype id.)
-     */
-
-    // Example: add two "motion sensor" services to the accessory
-    const motionSensorOneService = this.accessory.getService('Motion Sensor One Name')
-      || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
-
-    const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name')
-      || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
-
-    /**
-     * Updating characteristics values asynchronously.
-     *
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     *
-     */
-    let motionDetected = false;
-    setInterval(() => {
-      // EXAMPLE - inverse the trigger
-      motionDetected = !motionDetected;
-
-      // push the new value to HomeKit
-      motionSensorOneService.updateCharacteristic(this.platform.Characteristic.MotionDetected, motionDetected);
-      motionSensorTwoService.updateCharacteristic(this.platform.Characteristic.MotionDetected, !motionDetected);
-
-      this.platform.log.debug('Triggering motionSensorOneService:', motionDetected);
-      this.platform.log.debug('Triggering motionSensorTwoService:', !motionDetected);
-    }, 10000);
+    this.tvService = this.createService(this.platform.Service.Television);
+    this.tvService.setCharacteristic(this.platform.Characteristic.ActiveIdentifier, 1);
+    this.tvService.setCharacteristic(this.platform.Characteristic.ConfiguredName, platform.config.name!);
+    this.tvService.setCharacteristic(this.platform.Characteristic.SleepDiscoveryMode, this.platform.Characteristic.SleepDiscoveryMode.ALWAYS_DISCOVERABLE);
+    
+    this.tvService.getCharacteristic(this.platform.Characteristic.Active).onGet(this.getActive.bind(this)).onSet(this.setActive.bind(this));
+    
+    this.tvService.getCharacteristic(this.platform.Characteristic.RemoteKey)
+      .onSet((newValue) => {
+        switch(newValue) {
+        case this.platform.Characteristic.RemoteKey.REWIND: {
+          this.platform.log.info('set Remote Key Pressed: REWIND');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.FAST_FORWARD: {
+          this.platform.log.info('set Remote Key Pressed: FAST_FORWARD');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.NEXT_TRACK: {
+          this.platform.log.info('set Remote Key Pressed: NEXT_TRACK');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.PREVIOUS_TRACK: {
+          this.platform.log.info('set Remote Key Pressed: PREVIOUS_TRACK');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.ARROW_UP: {
+          this.platform.log.info('set Remote Key Pressed: ARROW_UP');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.ARROW_DOWN: {
+          this.platform.log.info('set Remote Key Pressed: ARROW_DOWN');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.ARROW_LEFT: {
+          this.platform.log.info('set Remote Key Pressed: ARROW_LEFT');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.ARROW_RIGHT: {
+          this.platform.log.info('set Remote Key Pressed: ARROW_RIGHT');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.SELECT: {
+          this.platform.log.info('set Remote Key Pressed: SELECT');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.BACK: {
+          this.platform.log.info('set Remote Key Pressed: BACK');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.EXIT: {
+          this.platform.log.info('set Remote Key Pressed: EXIT');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.PLAY_PAUSE: {
+          this.platform.log.info('set Remote Key Pressed: PLAY_PAUSE');
+          break;
+        }
+        case this.platform.Characteristic.RemoteKey.INFORMATION: {
+          this.platform.log.info('set Remote Key Pressed: INFORMATION');
+          break;
+        }
+        }
+      });
   }
 
   /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
+   * Finds an existing service or creates a new one based on the provided service type.
+   * 
+   * @param service - The service type or UUID to create or find.
+   * @returns The existing or newly created service.
    */
-  async setOn(value: CharacteristicValue) {
-    // implement your own code to turn your device on/off
-    this.exampleStates.On = value as boolean;
-
-    this.platform.log.debug('Set Characteristic On ->', value);
+  createService(service: string | WithUUID<typeof Service>) {
+    // Find the existing service, or create a new one, then return it
+    return this.accessory.getService(service) || this.accessory.addService(service as unknown as Service);
+  }
+  
+  /**
+   * Returns the URL for sending a command to the Epson projector.
+   * @param command - The command to be sent.
+   * @returns The URL for the specified command.
+   */
+  private getCommandURL(command: string): string {
+    const encodedCommand = encodeURIComponent(command); // URL encode
+    return `${this.platform.baseURL}/cgi-bin/json_query?jsoncallback=${encodedCommand}`;
   }
 
   /**
-   * Handle the "GET" requests from HomeKit
-   * These are sent when HomeKit wants to know the current state of the accessory, for example, checking if a Light bulb is on.
-   *
-   * GET requests should return as fast as possible. A long delay here will result in
-   * HomeKit being unresponsive and a bad user experience in general.
-   *
-   * If your device takes time to respond you should update the status of your device
-   * asynchronously instead using the `updateCharacteristic` method instead.
-   * In this case, you may decide not to implement `onGet` handlers, which may speed up
-   * the responsiveness of your device in the Home app.
-
-   * @example
-   * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
+   * Executes a command on the Epson projector and returns the response.
+   * 
+   * @param command - The command to be executed.
+   * @returns The response from the projector after executing the command.
    */
-  async getOn(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    const isOn = this.exampleStates.On;
+  private async runCommand(command: string): Promise<string> {
+    const url = this.getCommandURL(command); // Get the command's URL
+    const { data, res } = await request(url, this.platform.requestOptions);
 
-    this.platform.log.debug('Get Characteristic On ->', isOn);
+    const errorType = this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE;
+    const CommandError = new this.platform.api.hap.HapStatusError(errorType); // Default Error
 
-    // if you need to return an error to show the device as "Not Responding" in the Home app:
-    // throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    if (res.status !== 200) {
+      throw CommandError;
+    }
+    
+    const json = JSON.parse(data);
+    if (json.projector.feature.error === true) {
+      throw CommandError;
+    }
+    if (json.projector.feature.reply === PROJECTOR_ERR) {
+      throw CommandError;
+    }
 
-    return isOn;
+    return json.projector.feature.reply;
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, changing the Brightness
-   */
-  async setBrightness(value: CharacteristicValue) {
-    // implement your own code to set the brightness
-    this.exampleStates.Brightness = value as number;
-
-    this.platform.log.debug('Set Characteristic Brightness -> ', value);
+  private async getProperty(property: string) {
+    return this.runCommand(property + '?'); // Add `?`
   }
+
+  private async setProperty(property: string, value: CharacteristicValue) {
+    return this.runCommand(property + ' ' + value); // Add value
+  }
+
+  async setActive(value: CharacteristicValue) {
+    const powerResults = await this.setProperty(PROJECTOR_PROPERTY_POWER, (value ? 'ON' : 'OFF'));
+
+    this.projectorState.On = value as boolean;
+    this.platform.logger('Set Characteristic On ->', value, powerResults);
+  }
+
+  async getActive(): Promise<CharacteristicValue> {
+    const powerStatus = await this.getProperty(PROJECTOR_PROPERTY_POWER);
+    const active = PROJECTOR_PROPERTY_POWER_ACTIVE_MAP[powerStatus];
+    this.platform.logger('Get Characteristic On ->', active);
+    return active;
+  }
+
 }

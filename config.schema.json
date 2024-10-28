@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "EpsonProjector",
   "pluginType": "platform",
   "singular": true,
   "strictValidation": false,
@@ -7,10 +7,82 @@
     "type": "object",
     "properties": {
       "name": {
-        "title": "Name",
+        "title": "Projector Name",
+        "description": "The name of your Projector.",
         "type": "string",
-        "required": true,
-        "default": "Example Dynamic Platform"
+        "default": "My Projector",
+        "minLength": 1,
+        "required": true
+      },
+      "model": {
+        "title": "Projector Model",
+        "description": "The model number of the Projector to display in Homekit.",
+        "type": "string",
+        "default": "Unknown",
+        "required": false
+      },
+      "serial": {
+        "title": "Projector Serial Number",
+        "description": "The serial number of the Projector to display in Homekit.",
+        "type": "string",
+        "default": "Unknown",
+        "required": false
+      },
+
+      
+
+      "ipAddress": {
+        "title": "Projector IP Address",
+        "description": "The IP Address of your Projector.",
+        "type": "string",
+        "default": "192.168.0.100",
+        "format": "ipv4",
+        "required": true
+      },
+
+      "requestTimeout": {
+        "title": "HTTP Timeout",
+        "description": "How long to wait for an HTTP response before giving up (in ms).",
+        "type": "number",
+        "default": 10000,
+        "required": false
+      },
+
+      "referer": {
+        "title": "HTTP Referer",
+        "type": "string",
+        "required": false,
+        "default": "/cgi-bin/webconf",
+        "description": "The HTTP Referer Value (Needed for proper \"authentication\")."
+      },
+
+      "useDigestAuth": {
+        "title": "Enable HTTP Digest Auth",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Use HTTP Digest Authentication when making HTTP requests."
+      },
+      "digestAuthUsername": {
+        "title": "HTTP Username",
+        "type": "string",
+        "required": false,
+        "default": "EPSONWEB",
+        "description": "Web Control Username."
+      },
+      "digestAuthPassword": {
+        "title": "HTTP Password",
+        "type": "string",
+        "required": false,
+        "default": "1234",
+        "description": "Web Control Password."
+      },
+
+      "debug": {
+        "title": "Show Debug Messages",
+        "type": "boolean",
+        "default": true,
+        "required": false
       }
     }
   }
